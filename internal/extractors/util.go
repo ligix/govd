@@ -13,7 +13,10 @@ import (
 
 const maxRedirects = 5
 
-var extractorsByHost = getExtractorsMap()
+var (
+	extractorsByHost    = getExtractorsMap()
+	extractorsByPattern = getExtractorsByPattern()
+)
 
 func FromURL(url string) *models.ExtractorContext {
 	ctx, cancel := context.WithTimeout(
@@ -32,7 +35,7 @@ func FromURL(url string) *models.ExtractorContext {
 			return nil
 		}
 
-		extractors := getExtractorsByHost(host)
+		extractors := getExtractorsByHost(host, currentURL)
 		if len(extractors) == 0 {
 			cancel()
 			return nil
@@ -138,6 +141,39 @@ func getExtractorsMap() map[string][]*models.Extractor {
 	return extractorsByHost
 }
 
-func getExtractorsByHost(host string) []*models.Extractor {
-	return extractorsByHost[host]
+func getExtractorsByPattern() []*models.Extractor {
+	var extractors []*models.Extractor
+	for _, extractor := range Extractors {
+		if extractor.HostPattern != nil {
+			extractors = append(extractors, extractor)
+		}
+	}
+	return extractors
+}
+
+func getExtractorsByHost(host, rawURL string) []*models.Extractor {
+	exact := extractorsByHost[host]
+	if len(extractorsByPattern) == 0 {
+		return exact
+	}
+
+	hostname, err := util.ExtractHostname(rawURL)
+	if err != nil {
+		return exact
+	}
+
+	var matched []*models.Extractor
+	for _, extractor := range extractorsByPattern {
+		if extractor.HostPattern.MatchString(hostname) {
+			matched = append(matched, extractor)
+		}
+	}
+	if len(matched) == 0 {
+		return exact
+	}
+
+	extractors := make([]*models.Extractor, 0, len(exact)+len(matched))
+	extractors = append(extractors, exact...)
+	extractors = append(extractors, matched...)
+	return extractors
 }

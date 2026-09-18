@@ -56,11 +56,29 @@ var ShortExtractor = &models.Extractor{
 	},
 }
 
+// twitterOfficialHostPattern matches X/Twitter itself, including the common
+// embed-proxy prefixes that keep the twitter.com/x.com domain
+// (fxtwitter.com, vxtwitter.com, fixupx.com, ...).
+const twitterOfficialHostPattern = `(?:www\.|mobile\.|m\.)?(?:fx|vx|fixup|fixv|px)?(?:twitter|x)\.com`
+
+// twitterProxyHostPattern matches third-party X front-ends that mirror the
+// /<user>/status/<id> path. Most are nitter/shitter forks on rotating domains,
+// so they are matched by prefix rather than enumerated one by one.
+const twitterProxyHostPattern = `(?:www\.)?(?:twittpr|xcancel|xxcancel|lightbrd|twiiit)\.com` +
+	`|(?:www\.)?twitt\.re` +
+	`|(?:www\.)?nitt\.tr` +
+	`|(?:www\.)?twit\.0r\.cx` +
+	`|(?:www\.)?nuku\.trabun\.org` +
+	`|(?:www\.)?x\.n0g\.xyz` +
+	`|(?:www\.)?tw\.eir-nya\.gay` +
+	`|(?:www\.)?x\.yuuki\.sh` +
+	`|(?:www\.)?(?:nitter|shitter)[a-z0-9-]*\.[a-z0-9.-]+`
+
 var Extractor = &models.Extractor{
 	ID:          "twitter",
 	DisplayName: "Twitter (X)",
 
-	URLPattern: regexp.MustCompile(`https?:\/\/(?:fx|vx|fixup)?(twitter|x)\.com\/([^\/]+)\/status\/(?P<id>\d+)`),
+	URLPattern: regexp.MustCompile(`https?:\/\/(?:` + twitterOfficialHostPattern + `|` + twitterProxyHostPattern + `)\/([^\/]+)\/status\/(?P<id>\d+)`),
 	Host: []string{
 		"x",
 		"twitter",
@@ -68,7 +86,13 @@ var Extractor = &models.Extractor{
 		"vxtwitter",
 		"fixuptwitter",
 		"fixupx",
+		"fixvx",
+		"pxtwitter",
 	},
+
+	// proxy instances use rotating/unpredictable domains, so match them
+	// by pattern instead of enumerating every host.
+	HostPattern: regexp.MustCompile(`(?i)^(?:` + twitterProxyHostPattern + `)$`),
 
 	GetFunc: func(ctx *models.ExtractorContext) (*models.ExtractorResponse, error) {
 		media, err := MediaFromAPI(ctx)
@@ -173,14 +197,27 @@ func GetTweetAPI(ctx *models.ExtractorContext) (*Tweet, error) {
 		return nil, util.ErrUnavailable
 	}
 
+	return tweetFromResult(result)
+}
+
+// tweetFromResult unwraps the tweet payload and prefers the full long-form
+// text from note tweets over the truncated legacy full_text.
+func tweetFromResult(result *TweetResult) (*Tweet, error) {
 	var tweet *Tweet
+	var noteTweet *NoteTweet
 	switch {
-	case result.Tweet != nil:
+	case result.Tweet != nil && result.Tweet.Legacy != nil:
 		tweet = result.Tweet.Legacy
+		noteTweet = result.Tweet.NoteTweet
 	case result.Legacy != nil:
 		tweet = result.Legacy
+		noteTweet = result.NoteTweet
 	default:
 		return nil, fmt.Errorf("tweet data not found")
+	}
+
+	if text := noteTweet.Text(); text != "" {
+		tweet.FullText = text
 	}
 
 	return tweet, nil

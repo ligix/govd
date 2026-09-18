@@ -19,6 +19,10 @@ type Extractor struct {
 	URLPattern *regexp.Regexp
 	Host       []string
 
+	// HostPattern matches hosts that cannot be enumerated as exact Host
+	// entries (e.g. self-hosted or rotating proxy instances).
+	HostPattern *regexp.Regexp
+
 	Hidden   bool
 	Redirect bool
 

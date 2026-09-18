@@ -32,11 +32,10 @@ func GetNamedGroups(re *regexp.Regexp, str string) map[string]string {
 }
 
 func ExtractBaseHost(rawURL string) (string, error) {
-	parsedURL, err := url.Parse(rawURL)
+	host, err := ExtractHostname(rawURL)
 	if err != nil {
 		return "", err
 	}
-	host := parsedURL.Hostname()
 	etld, err := publicsuffix.EffectiveTLDPlusOne(host)
 	if err != nil {
 		return "", err
@@ -46,6 +45,14 @@ func ExtractBaseHost(rawURL string) (string, error) {
 		return "", fmt.Errorf("invalid domain structure")
 	}
 	return parts[0], nil
+}
+
+func ExtractHostname(rawURL string) (string, error) {
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		return "", err
+	}
+	return parsedURL.Hostname(), nil
 }
 
 func ExceedsMaxFileSize(fileSize int64) bool {

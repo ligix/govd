@@ -1,14 +1,12 @@
-FROM golang:1.26-alpine AS builder
+FROM golang:1.26-alpine3.24 AS builder
 
 ENV GOCACHE=/root/.cache/go-build
 
 RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
     --mount=type=cache,target=/var/lib/apk,sharing=locked \
     apk add --no-cache \
-        --repository="https://dl-cdn.alpinelinux.org/alpine/edge/main" \
-        --repository="https://dl-cdn.alpinelinux.org/alpine/edge/community" \
         "build-base=0.5-r4" \
-        "libheif-dev=1.21.2-r2"
+        "libheif-dev=1.23.0-r0"
 
 WORKDIR /app
 
@@ -29,17 +27,15 @@ RUN --mount=type=cache,target="/root/.cache/go-build" \
         -ldflags="-s -w" \
         -o govd ./cmd/main.go
 
-FROM alpine:3.22 AS runtime
+FROM alpine:3.24 AS runtime
 
 WORKDIR /app
 
 RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
     --mount=type=cache,target=/var/lib/apk,sharing=locked \
     apk add --no-cache \
-        --repository="https://dl-cdn.alpinelinux.org/alpine/edge/main" \
-        --repository="https://dl-cdn.alpinelinux.org/alpine/edge/community" \
-        "ffmpeg=8.0.1-r3" \
-        "libheif=1.21.2-r2"
+        "ffmpeg=8.1.2-r0" \
+        "libheif=1.23.0-r0"
 
 COPY --from=builder /app/govd ./govd
 

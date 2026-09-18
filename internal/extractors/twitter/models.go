@@ -11,6 +11,7 @@ type APIResponse struct {
 type TweetResult struct {
 	Tweet       *TweetResultData `json:"tweet"`
 	Legacy      *Tweet           `json:"legacy"`
+	NoteTweet   *NoteTweet       `json:"note_tweet"`
 	RestID      string           `json:"rest_id"`
 	Core        *Core            `json:"core"`
 	Views       *ViewsInfo       `json:"views"`
@@ -21,12 +22,30 @@ type TweetResult struct {
 
 type TweetResultData struct {
 	Legacy      *Tweet     `json:"legacy"`
+	NoteTweet   *NoteTweet `json:"note_tweet"`
 	RestID      string     `json:"rest_id"`
 	Core        *Core      `json:"core"`
 	Views       *ViewsInfo `json:"views"`
 	Source      string     `json:"source"`
 	EditControl *EditInfo  `json:"edit_control"`
 	TypeName    string     `json:"__typename"`
+}
+
+// NoteTweet holds the full text of long-form ("note") tweets. For those,
+// legacy.full_text only contains a truncated preview.
+type NoteTweet struct {
+	NoteTweetResults struct {
+		Result struct {
+			Text string `json:"text"`
+		} `json:"result"`
+	} `json:"note_tweet_results"`
+}
+
+func (n *NoteTweet) Text() string {
+	if n == nil {
+		return ""
+	}
+	return n.NoteTweetResults.Result.Text
 }
 
 type EditInfo struct {
