@@ -41,8 +41,10 @@ func (client *HTTPClient) FetchWithContext(
 	for k, v := range client.Headers {
 		req.Header.Set(k, v)
 	}
-	for _, cookie := range client.Cookies {
-		req.AddCookie(cookie)
+	if !params.SkipCookies {
+		for _, cookie := range client.Cookies {
+			req.AddCookie(cookie)
+		}
 	}
 	for k, v := range params.Headers {
 		req.Header.Set(k, v)

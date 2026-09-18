@@ -33,6 +33,9 @@ type RequestParams struct {
 	Body    io.Reader
 	Headers map[string]string
 	Cookies []*http.Cookie
+	// SkipCookies prevents the client-scoped cookies from being attached to
+	// the request. Useful for endpoints that must be requested anonymously.
+	SkipCookies bool
 }
 
 type EdgeProxyResponse struct {

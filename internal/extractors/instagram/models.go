@@ -1,14 +1,5 @@
 package instagram
 
-type GraphQLResponse struct {
-	Data   *GraphQLData `json:"data"`
-	Status string       `json:"status"`
-}
-
-type GraphQLData struct {
-	ShortcodeMedia *Media `json:"xdt_shortcode_media"`
-}
-
 type ContextJSON struct {
 	Context *Context `json:"context"`
 	GqlData *GqlData `json:"gql_data"`
@@ -16,6 +7,53 @@ type ContextJSON struct {
 
 type GqlData struct {
 	ShortcodeMedia *Media `json:"shortcode_media"`
+}
+
+// PolarisGraphQLResponse is the response of the current logged-out
+// PolarisLoggedOutDesktopWWWPostRootContentQuery GraphQL query.
+type PolarisGraphQLResponse struct {
+	Data *PolarisGraphQLData `json:"data"`
+}
+
+type PolarisGraphQLData struct {
+	XIGPolarisMedia *PolarisMedia `json:"xig_polaris_media"`
+}
+
+type PolarisMedia struct {
+	PK                  string            `json:"pk"`
+	Code                string            `json:"code"`
+	IfNotGatedLoggedOut *PolarisMediaItem `json:"if_not_gated_logged_out"`
+	GatingRuling        any               `json:"gating_ruling"`
+}
+
+type PolarisMediaItem struct {
+	PK             string              `json:"pk"`
+	Code           string              `json:"code"`
+	MediaType      int                 `json:"media_type"`
+	Caption        *PolarisCaption     `json:"caption"`
+	VideoVersions  []*VideoVersions    `json:"video_versions"`
+	ImageVersions  *ImageVersions      `json:"image_versions2"`
+	CarouselMedia  []*PolarisMediaItem `json:"carousel_media"`
+	OriginalWidth  int32               `json:"original_width"`
+	OriginalHeight int32               `json:"original_height"`
+}
+
+type PolarisCaption struct {
+	Text string `json:"text"`
+}
+
+// MediaInfoResponse is returned by /api/v1/media/{pk}/info/.
+type MediaInfoResponse struct {
+	Items []*PolarisMediaItem `json:"items"`
+}
+
+// ReelsMediaResponse is returned by /api/v1/feed/reels_media/.
+type ReelsMediaResponse struct {
+	Reels map[string]*Reel `json:"reels"`
+}
+
+type Reel struct {
+	Items []*PolarisMediaItem `json:"items"`
 }
 
 type EdgeMediaToCaption struct {

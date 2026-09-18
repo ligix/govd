@@ -2,12 +2,11 @@ package instagram
 
 import (
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
-	"math/big"
+	"math"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -26,8 +25,16 @@ import (
 )
 
 const (
-	graphQLEndpoint = "https://www.instagram.com/graphql/query/"
-	polarisAction   = "PolarisPostActionLoadPostQueryQuery"
+	graphQLEndpoint = "https://www.instagram.com/api/graphql"
+	polarisAction   = "PolarisLoggedOutDesktopWWWPostRootContentQuery"
+	graphQLDocID    = "27130156389949648"
+
+	// webAppID is the Instagram web application id.
+	webAppID = "936619743392459"
+
+	// desktopUserAgent must stay coherent with the sec-ch-ua headers below,
+	// otherwise Instagram serves the logged-out shell instead of GraphQL data.
+	desktopUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
 	igramHostname = "api-wh.igram.world"
 	igramAPIBase  = "api.igram.world"
@@ -57,6 +64,34 @@ var (
 
 	igramHeaders = map[string]string{
 		"Referer": "https://igram.world/",
+	}
+
+	// graphQLHeaders mirror a logged-out desktop browser fetch. Instagram
+	// rejects requests whose UA and client hints do not agree.
+	graphQLHeaders = map[string]string{
+		"User-Agent":         desktopUserAgent,
+		"Accept":             "*/*",
+		"Accept-Language":    "en-US,en;q=0.9",
+		"Sec-Ch-Ua":          `"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"`,
+		"Sec-Ch-Ua-Mobile":   "?0",
+		"Sec-Ch-Ua-Platform": `"Windows"`,
+		"Sec-Fetch-Dest":     "empty",
+		"Sec-Fetch-Mode":     "cors",
+		"Sec-Fetch-Site":     "same-origin",
+		"Origin":             "https://www.instagram.com",
+		"X-IG-App-ID":        webAppID,
+		"X-FB-Friendly-Name": polarisAction,
+		"X-Requested-With":   "XMLHttpRequest",
+		"Content-Type":       "application/x-www-form-urlencoded",
+	}
+
+	// apiHeaders are used for the authenticated mobile/web API endpoints.
+	apiHeaders = map[string]string{
+		"X-IG-App-ID":    webAppID,
+		"X-ASBD-ID":      "359341",
+		"X-IG-WWW-Claim": "0",
+		"Accept":         "*/*",
+		"Referer":        "https://www.instagram.com/",
 	}
 )
 
@@ -285,40 +320,67 @@ func GetCDNURL(contentURL string) (string, error) {
 	return cdnURL, nil
 }
 
-func GetGQLData(ctx *models.ExtractorContext) (*GraphQLData, error) {
-	graphHeaders, body, err := BuildGQLData()
+// ShortcodeToPK converts an Instagram shortcode (e.g. "DdSNkXyjM2y") into its
+// numeric media id using Instagram's base64url-like alphabet.
+func ShortcodeToPK(shortcode string) (string, error) {
+	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+
+	if shortcode == "" {
+		return "", fmt.Errorf("empty shortcode")
+	}
+
+	var pk uint64
+	for _, char := range shortcode {
+		index := strings.IndexRune(alphabet, char)
+		if index < 0 {
+			return "", fmt.Errorf("invalid character %q in shortcode", char)
+		}
+		if pk > (math.MaxUint64-uint64(index))/64 {
+			return "", fmt.Errorf("shortcode is too large")
+		}
+		pk = pk*64 + uint64(index)
+	}
+
+	return strconv.FormatUint(pk, 10), nil
+}
+
+func GetGQLData(ctx *models.ExtractorContext) (*PolarisMediaItem, error) {
+	mediaID, err := ShortcodeToPK(ctx.ContentID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build GQL data: %w", err)
+		return nil, fmt.Errorf("failed to convert shortcode: %w", err)
 	}
-	formData := url.Values{}
-	for key, value := range body {
-		formData.Set(key, value)
-	}
-	formData.Set("fb_api_caller_class", "RelayModern")
-	formData.Set("fb_api_req_friendly_name", polarisAction)
-	variables := map[string]any{
-		"shortcode":               ctx.ContentID,
-		"fetch_tagged_user_count": nil,
-		"hoisted_comment_id":      nil,
-		"hoisted_reply_id":        nil,
-	}
-	variablesJSON, err := sonic.ConfigFastest.Marshal(variables)
+
+	variablesJSON, err := sonic.ConfigFastest.Marshal(map[string]string{
+		"media_id": mediaID,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal variables: %w", err)
 	}
-	formData.Set("variables", string(variablesJSON))
-	formData.Set("server_timestamps", "true")
-	formData.Set("doc_id", "8845758582119845") // idk what this is
 
-	for key, value := range webHeaders {
-		graphHeaders[key] = value
+	formData := url.Values{}
+	formData.Set("fb_api_caller_class", "RelayModern")
+	formData.Set("fb_api_req_friendly_name", polarisAction)
+	formData.Set("server_timestamps", "true")
+	formData.Set("variables", string(variablesJSON))
+	formData.Set("doc_id", graphQLDocID)
+
+	headers := make(map[string]string, len(graphQLHeaders)+1)
+	for key, value := range graphQLHeaders {
+		headers[key] = value
 	}
+	headers["Referer"] = fmt.Sprintf(
+		"https://www.instagram.com/p/%s/", ctx.ContentID,
+	)
+
 	resp, err := ctx.Fetch(
 		http.MethodPost,
 		graphQLEndpoint,
 		&networking.RequestParams{
-			Headers: graphHeaders,
+			Headers: headers,
 			Body:    strings.NewReader(formData.Encode()),
+			// this endpoint must be requested anonymously: sending the
+			// logged-in session cookies yields an HTML page instead of JSON.
+			SkipCookies: true,
 		},
 	)
 	if err != nil {
@@ -331,94 +393,174 @@ func GetGQLData(ctx *models.ExtractorContext) (*GraphQLData, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("invalid response code: %s", resp.Status)
 	}
-	var response GraphQLResponse
+
+	var response PolarisGraphQLResponse
 	decoder := sonic.ConfigFastest.NewDecoder(resp.Body)
 	if err := decoder.Decode(&response); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
-	if response.Data == nil {
-		return nil, fmt.Errorf("data is nil")
+	if response.Data == nil || response.Data.XIGPolarisMedia == nil {
+		return nil, util.ErrUnavailable
 	}
-	if response.Status != "ok" {
-		return nil, fmt.Errorf("status is not ok: %s", response.Status)
+	media := response.Data.XIGPolarisMedia.IfNotGatedLoggedOut
+	if media == nil {
+		return nil, util.ErrUnavailable
 	}
-	if response.Data.ShortcodeMedia == nil {
-		return nil, fmt.Errorf("shortcode_media is nil")
-	}
-	return response.Data, nil
+	return media, nil
 }
 
-func BuildGQLData() (map[string]string, map[string]string, error) {
-	const (
-		domain                = "www"
-		requestID             = "b"
-		clientCapabilityGrade = "EXCELLENT"
-		sessionInternalID     = "7436540909012459023"
-		apiVersion            = "1"
-		rolloutHash           = "1019933358"
-		appID                 = "936619743392459"
-		bloksVersionID        = "6309c8d03d8a3f47a1658ba38b304a3f837142ef5f637ebf1f8f52d4b802951e"
-		asbdID                = "129477"
-		hiddenState           = "20126.HYP:instagram_web_pkg.2.1...0"
-		loggedIn              = "0"
-		cometRequestID        = "7"
-		appVersion            = "0"
-		pixelRatio            = "2"
-		buildType             = "trunk"
+// ParsePolarisMedia converts a Polaris media node into the extractor's media
+// model. A carousel becomes one item per child node, while single photos and
+// videos become a single item.
+func ParsePolarisMedia(ctx *models.ExtractorContext, data *PolarisMediaItem) (*models.Media, error) {
+	media := ctx.NewMedia()
+	if data.Caption != nil {
+		media.SetCaption(data.Caption.Text)
+	}
+
+	if data.MediaType == 8 && len(data.CarouselMedia) > 0 {
+		for _, node := range data.CarouselMedia {
+			addPolarisItem(media, node)
+		}
+	} else {
+		addPolarisItem(media, data)
+	}
+
+	if len(media.Items) == 0 {
+		return nil, util.ErrUnavailable
+	}
+	return media, nil
+}
+
+func addPolarisItem(media *models.Media, data *PolarisMediaItem) {
+	if data == nil {
+		return
+	}
+
+	if video := GetBestVideoVersion(data.VideoVersions); video != nil && video.URL != "" {
+		item := media.NewItem()
+		item.AddFormats(&models.MediaFormat{
+			FormatID:     "video",
+			Type:         database.MediaTypeVideo,
+			VideoCodec:   database.MediaCodecAvc,
+			AudioCodec:   database.MediaCodecAac,
+			URL:          []string{video.URL},
+			ThumbnailURL: bestThumbnailURL(data.ImageVersions),
+			Width:        int32(video.Width),
+			Height:       int32(video.Height),
+		})
+		return
+	}
+
+	var candidates []*Candidates
+	if data.ImageVersions != nil {
+		candidates = data.ImageVersions.Candidates
+	}
+	if image := GetBestCandidate(candidates); image != nil && image.URL != "" {
+		item := media.NewItem()
+		item.AddFormats(&models.MediaFormat{
+			FormatID: "image",
+			Type:     database.MediaTypePhoto,
+			URL:      []string{image.URL},
+			Width:    int32(image.Width),
+			Height:   int32(image.Height),
+		})
+	}
+}
+
+func bestThumbnailURL(imageVersions *ImageVersions) []string {
+	if imageVersions == nil {
+		return nil
+	}
+	image := GetBestCandidate(imageVersions.Candidates)
+	if image == nil || image.URL == "" {
+		return nil
+	}
+	return []string{image.URL}
+}
+
+// GetNativeStory fetches a story through Instagram's authenticated API.
+// Highlights are fetched as a whole reel, while a regular story is fetched
+// directly by its media id (the id from the URL).
+func GetNativeStory(ctx *models.ExtractorContext) (*models.Media, error) {
+	if ctx.MatchGroups["user"] == "highlights" {
+		return GetHighlightMedia(ctx)
+	}
+	return GetStoryMediaByID(ctx)
+}
+
+func GetStoryMediaByID(ctx *models.ExtractorContext) (*models.Media, error) {
+	apiURL := fmt.Sprintf(
+		"https://www.instagram.com/api/v1/media/%s/info/",
+		ctx.ContentID,
 	)
-	session := "::" + util.RandomAlphaString(6)
-	sessionData := util.RandomBase64(8)
-	csrfToken := util.RandomBase64(32)
-	deviceID := util.RandomBase64(24)
-	machineID := util.RandomBase64(24)
-	dynamicFlags := util.RandomBase64(154)
-	clientSessionRnd := util.RandomBase64(154)
-	jazoestBig, err := rand.Int(rand.Reader, big.NewInt(10000))
+	resp, err := ctx.Fetch(
+		http.MethodGet,
+		apiURL,
+		&networking.RequestParams{Headers: apiHeaders},
+	)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to generate jazoest: %w", err)
+		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
-	jazoest := strconv.FormatInt(jazoestBig.Int64()+1, 10)
-	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
-	cookies := []string{
-		"csrftoken=" + csrfToken,
-		"ig_did=" + deviceID,
-		"wd=1280x720",
-		"dpr=2",
-		"mid=" + machineID,
-		"ig_nrcb=1",
+	defer resp.Body.Close()
+
+	logger.WriteFile("ig_story_info_response", resp)
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("invalid response code: %s", resp.Status)
 	}
-	headers := map[string]string{
-		"x-ig-app-id":        appID,
-		"X-FB-LSD":           sessionData,
-		"X-CSRFToken":        csrfToken,
-		"X-Bloks-Version-Id": bloksVersionID,
-		"x-asbd-id":          asbdID,
-		"cookie":             strings.Join(cookies, "; "),
-		"Content-Type":       "application/x-www-form-urlencoded",
-		"X-FB-Friendly-Name": polarisAction,
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
-	body := map[string]string{
-		"__d":         domain,
-		"__a":         apiVersion,
-		"__s":         session,
-		"__hs":        hiddenState,
-		"__req":       requestID,
-		"__ccg":       clientCapabilityGrade,
-		"__rev":       rolloutHash,
-		"__hsi":       sessionInternalID,
-		"__dyn":       dynamicFlags,
-		"__csr":       clientSessionRnd,
-		"__user":      loggedIn,
-		"__comet_req": cometRequestID,
-		"libav":       appVersion,
-		"dpr":         pixelRatio,
-		"lsd":         sessionData,
-		"jazoest":     jazoest,
-		"__spin_r":    rolloutHash,
-		"__spin_b":    buildType,
-		"__spin_t":    timestamp,
+	var data MediaInfoResponse
+	if err := sonic.ConfigFastest.Unmarshal(body, &data); err != nil {
+		return nil, util.ErrAuthenticationNeeded
 	}
-	return headers, body, nil
+	if len(data.Items) == 0 {
+		return nil, util.ErrUnavailable
+	}
+	return ParsePolarisMedia(ctx, data.Items[0])
+}
+
+func GetHighlightMedia(ctx *models.ExtractorContext) (*models.Media, error) {
+	reelID := "highlight:" + ctx.ContentID
+	apiURL := "https://www.instagram.com/api/v1/feed/reels_media/?reel_ids=" + reelID
+	resp, err := ctx.Fetch(
+		http.MethodGet,
+		apiURL,
+		&networking.RequestParams{Headers: apiHeaders},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	logger.WriteFile("ig_highlight_response", resp)
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("invalid response code: %s", resp.Status)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+	var data ReelsMediaResponse
+	if err := sonic.ConfigFastest.Unmarshal(body, &data); err != nil {
+		return nil, util.ErrAuthenticationNeeded
+	}
+	reel := data.Reels[reelID]
+	if reel == nil || len(reel.Items) == 0 {
+		return nil, util.ErrUnavailable
+	}
+	media := ctx.NewMedia()
+	for _, item := range reel.Items {
+		addPolarisItem(media, item)
+	}
+	if len(media.Items) == 0 {
+		return nil, util.ErrUnavailable
+	}
+	return media, nil
 }
 
 func GetBestCandidate(candidates []*Candidates) *Candidates {

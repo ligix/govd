@@ -55,15 +55,24 @@ var StoriesExtractor = &models.Extractor{
 	ID:          "instagram",
 	DisplayName: "Instagram Stories",
 
-	URLPattern: regexp.MustCompile(`https:\/\/(www\.)?(?:dd)?instagram\.com\/stories\/[a-zA-Z0-9._]+\/(?P<id>\d+)`),
+	URLPattern: regexp.MustCompile(`https:\/\/(www\.)?(?:dd)?instagram\.com\/stories\/(?P<user>[a-zA-Z0-9._]+)\/(?P<id>\d+)`),
 	Host:       instagramHost,
 	Hidden:     true,
 
 	GetFunc: func(ctx *models.ExtractorContext) (*models.ExtractorResponse, error) {
-		media, err := GetIGramStory(ctx)
-		return &models.ExtractorResponse{
-			Media: media,
-		}, err
+		media, err1 := GetNativeStory(ctx)
+		if err1 == nil {
+			return &models.ExtractorResponse{
+				Media: media,
+			}, nil
+		}
+		media, err2 := GetIGramStory(ctx)
+		if err2 == nil {
+			return &models.ExtractorResponse{
+				Media: media,
+			}, nil
+		}
+		return nil, fmt.Errorf("all methods failed: %w; %w", err1, err2)
 	},
 }
 
@@ -90,7 +99,7 @@ func GetGQLMedia(ctx *models.ExtractorContext) (*models.Media, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get graph data: %w", err)
 	}
-	return ParseGQLMedia(ctx, graphData.ShortcodeMedia)
+	return ParsePolarisMedia(ctx, graphData)
 }
 
 func GetEmbedMedia(ctx *models.ExtractorContext) (*models.Media, error) {
