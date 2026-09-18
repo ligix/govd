@@ -128,29 +128,6 @@ type Context struct {
 	VideoViews            int    `json:"video_views"`
 }
 
-type IGramResponse struct {
-	Items []*IGramMedia `json:"items"`
-}
-
-type IGramMedia struct {
-	URL       []*IGramMediaURL `json:"url"`
-	Thumb     string           `json:"thumb"`
-	Hosting   string           `json:"hosting"`
-	Timestamp int              `json:"timestamp"`
-	Success   *bool            `json:"success"`
-}
-
-type IGramMediaURL struct {
-	URL  string `json:"url"`
-	Name string `json:"name"`
-	Type string `json:"type"`
-	Ext  string `json:"ext"`
-}
-
-type IGramStoryResponse struct {
-	Result []*Result `json:"result"`
-}
-
 type VideoVersions struct {
 	URL             string `json:"url"`
 	Width           int    `json:"width"`
@@ -170,14 +147,4 @@ type Candidates struct {
 
 type ImageVersions struct {
 	Candidates []*Candidates `json:"candidates"`
-}
-
-type Result struct {
-	TakenAt        int              `json:"taken_at"`
-	VideoVersions  []*VideoVersions `json:"video_versions"`
-	HasAudio       bool             `json:"has_audio"`
-	ImageVersions  *ImageVersions   `json:"image_versions2"`
-	OriginalHeight int              `json:"original_height"`
-	OriginalWidth  int              `json:"original_width"`
-	Pk             string           `json:"pk"`
 }

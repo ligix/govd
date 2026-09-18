@@ -1,9 +1,6 @@
 package instagram
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"math"
@@ -12,7 +9,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/govdbot/govd/internal/database"
 	"github.com/govdbot/govd/internal/logger"
@@ -35,11 +31,6 @@ const (
 	// desktopUserAgent must stay coherent with the sec-ch-ua headers below,
 	// otherwise Instagram serves the logged-out shell instead of GraphQL data.
 	desktopUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-
-	igramHostname = "api-wh.igram.world"
-	igramAPIBase  = "api.igram.world"
-	igramHMACKey  = "75f2d70d3724f98e4a7d1ffd0ba9cfd907f3ae2632ee159980e2c521bff62358"
-	igramStaticTS = 1771418815381 // parseInt("mls10xp1", 36)
 )
 
 var (
@@ -60,10 +51,6 @@ var (
 		"Sec-Fetch-Site":            "none",
 		"Sec-Fetch-User":            "?1",
 		"Upgrade-Insecure-Requests": "1",
-	}
-
-	igramHeaders = map[string]string{
-		"Referer": "https://igram.world/",
 	}
 
 	// graphQLHeaders mirror a logged-out desktop browser fetch. Instagram
@@ -190,134 +177,6 @@ func ParseEmbedGQL(body []byte) (*Media, error) {
 		return nil, fmt.Errorf("shortcode_media not found")
 	}
 	return ctxJSON.GqlData.ShortcodeMedia, nil
-}
-
-func IGramBodyFromURL(contentURL string) (io.Reader, error) {
-	return igramBuildPayload(map[string]string{
-		"target_url": contentURL,
-	})
-}
-
-func IGramBodyFromParams(params map[string]string) (io.Reader, error) {
-	return igramBuildPayload(params)
-}
-
-func igramBuildPayload(urlParams map[string]string) (io.Reader, error) {
-	nowMs := time.Now().UnixMilli()
-	serverMs := getIGramServerTime()
-
-	drift := serverMs - nowMs
-	var correction int64
-	if drift >= 60000 || drift <= -60000 {
-		correction = drift
-	}
-	ts := nowMs + correction
-
-	// partial payload fields that get signed
-	partial := map[string]any{
-		"_sc": 0,
-		"_ef": 0,
-		"_df": 0,
-	}
-	for k, v := range urlParams {
-		partial[k] = v
-	}
-
-	sig, err := igramSign(partial, ts)
-	if err != nil {
-		return nil, err
-	}
-
-	// assemble final payload
-	final := make(map[string]any, len(partial)+5)
-	for k, v := range partial {
-		final[k] = v
-	}
-	final["ts"] = ts
-	final["_ts"] = igramStaticTS
-	final["_tsc"] = correction
-	final["_sv"] = 2
-	final["_s"] = sig
-
-	jsonBytes, err := sonic.ConfigFastest.Marshal(final)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal payload: %w", err)
-	}
-
-	return strings.NewReader(string(jsonBytes)), nil
-}
-
-func igramSign(partial map[string]any, ts int64) (string, error) {
-	// sonic.ConfigStd sorts map keys alphabetically, matching
-	// the signing: JSON.stringify(sorted_partial) + String(ts)
-	jsonBytes, err := sonic.ConfigStd.Marshal(partial)
-	if err != nil {
-		return "", fmt.Errorf("failed to marshal partial payload: %w", err)
-	}
-
-	data := string(jsonBytes) + strconv.FormatInt(ts, 10)
-
-	keyBytes, err := hex.DecodeString(igramHMACKey)
-	if err != nil {
-		return "", fmt.Errorf("failed to decode HMAC key: %w", err)
-	}
-
-	mac := hmac.New(sha256.New, keyBytes)
-	mac.Write([]byte(data))
-	return hex.EncodeToString(mac.Sum(nil)), nil
-}
-
-func getIGramServerTime() int64 {
-	apiURL := fmt.Sprintf("https://%s/msec", igramAPIBase)
-	resp, err := http.Get(apiURL)
-	if err != nil {
-		return time.Now().UnixMilli()
-	}
-	defer resp.Body.Close()
-
-	var result struct {
-		Msec float64 `json:"msec"`
-	}
-	decoder := sonic.ConfigFastest.NewDecoder(resp.Body)
-	if err := decoder.Decode(&result); err != nil {
-		return time.Now().UnixMilli()
-	}
-	return int64(result.Msec * 1000)
-}
-
-func ParseIGramResponse(body []byte) (*IGramResponse, error) {
-	// try to unmarshal as a single IGramMedia and then as a slice
-	var media IGramMedia
-
-	if err := sonic.ConfigFastest.Unmarshal(body, &media); err != nil {
-		// try with slice
-		var mediaList []*IGramMedia
-		if err := sonic.ConfigFastest.Unmarshal(body, &mediaList); err != nil {
-			return nil, fmt.Errorf("failed to decode response: %w", err)
-		}
-		return &IGramResponse{
-			Items: mediaList,
-		}, nil
-	}
-	if media.Success != nil && !(*media.Success) {
-		return nil, util.ErrUnavailable
-	}
-	return &IGramResponse{
-		Items: []*IGramMedia{&media},
-	}, nil
-}
-
-func GetCDNURL(contentURL string) (string, error) {
-	parsedURL, err := url.Parse(contentURL)
-	if err != nil {
-		return "", fmt.Errorf("can't parse igram URL: %w", err)
-	}
-	queryParams, err := url.ParseQuery(parsedURL.RawQuery)
-	if err != nil {
-		return "", fmt.Errorf("can't unescape igram URL: %w", err)
-	}
-	cdnURL := queryParams.Get("uri")
-	return cdnURL, nil
 }
 
 // ShortcodeToPK converts an Instagram shortcode (e.g. "DdSNkXyjM2y") into its
