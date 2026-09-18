@@ -20,6 +20,7 @@ require (
 	github.com/nicksnyder/go-i18n/v2 v2.6.0
 	github.com/pressly/goose/v3 v3.24.3
 	github.com/prometheus/client_golang v1.23.2
+	github.com/rivo/uniseg v0.4.7
 	github.com/strukturag/libheif v1.23.0
 	github.com/sunfish-shogi/bufseekio v0.1.0
 	github.com/titanous/json5 v1.0.0

@@ -122,8 +122,6 @@ func MediaFromAPI(ctx *models.ExtractorContext) (*models.Media, error) {
 		mediaEntities = tweetData.Entities.Media
 	case tweetData.ExtendedEntities != nil && len(tweetData.ExtendedEntities.Media) > 0:
 		mediaEntities = tweetData.ExtendedEntities.Media
-	default:
-		return nil, nil
 	}
 
 	for _, mediaEntity := range mediaEntities {
@@ -146,8 +144,19 @@ func MediaFromAPI(ctx *models.ExtractorContext) (*models.Media, error) {
 	}
 
 	if len(media.Items) == 0 {
-		// tweet has no media
-		return nil, nil
+		// no media: render the tweet as an image card
+		card, err := renderTweetCard(ctx, tweetData)
+		if err != nil {
+			ctx.Warnf("failed to render tweet card: %v", err)
+			return nil, nil
+		}
+		item := media.NewItem()
+		item.AddFormats(&models.MediaFormat{
+			Type:     database.MediaTypePhoto,
+			FormatID: "tweet_card",
+			Rendered: card,
+		})
+		return media, nil
 	}
 
 	return media, nil
@@ -205,19 +214,38 @@ func GetTweetAPI(ctx *models.ExtractorContext) (*Tweet, error) {
 func tweetFromResult(result *TweetResult) (*Tweet, error) {
 	var tweet *Tweet
 	var noteTweet *NoteTweet
+	var core *Core
 	switch {
 	case result.Tweet != nil && result.Tweet.Legacy != nil:
 		tweet = result.Tweet.Legacy
 		noteTweet = result.Tweet.NoteTweet
+		core = result.Tweet.Core
 	case result.Legacy != nil:
 		tweet = result.Legacy
 		noteTweet = result.NoteTweet
+		core = result.Core
 	default:
 		return nil, fmt.Errorf("tweet data not found")
 	}
 
 	if text := noteTweet.Text(); text != "" {
 		tweet.FullText = text
+	}
+
+	if core != nil {
+		if user := core.UserResults.Result.Legacy; user != nil {
+			tweet.AuthorName = user.Name
+			tweet.AuthorHandle = user.ScreenName
+			tweet.AuthorAvatar = user.ProfileImageURLHTTPS
+			tweet.AuthorVerified = user.IsBlueVerified
+		}
+	}
+
+	switch {
+	case result.Views != nil:
+		tweet.ViewCount = result.Views.Count
+	case result.Tweet != nil && result.Tweet.Views != nil:
+		tweet.ViewCount = result.Tweet.Views.Count
 	}
 
 	return tweet, nil

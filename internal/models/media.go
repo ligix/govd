@@ -48,6 +48,7 @@ type MediaItem struct {
 type MediaFormat struct {
 	FormatID         string
 	FileID           string
+	Rendered         []byte
 	Type             database.MediaType
 	AudioCodec       database.MediaCodec
 	VideoCodec       database.MediaCodec

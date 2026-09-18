@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"fmt"
 	"sync"
 
@@ -130,13 +131,32 @@ func downloadFormat(
 	index int,
 	format *models.MediaFormat,
 ) (*models.DownloadedFormat, error) {
-	if len(format.URL) == 0 {
-		return nil, fmt.Errorf("no URL found for selected format")
-	}
-
 	fileName := format.GetFileName()
 	var filePath string
 	var thumbnailFilePath string
+
+	// pre-rendered images (e.g. tweet cards) are saved directly, no URL needed
+	if len(format.Rendered) > 0 {
+		filePath = download.ToPath(fileName)
+		ctx.FilesTracker.Add(filePath)
+
+		bounds, err := util.ImgToJPEG(bytes.NewReader(format.Rendered), filePath, 0)
+		if err != nil {
+			return nil, fmt.Errorf("failed to save rendered image: %w", err)
+		}
+		format.Width = bounds.W
+		format.Height = bounds.H
+
+		return &models.DownloadedFormat{
+			Format:   format,
+			Index:    index,
+			FilePath: filePath,
+		}, nil
+	}
+
+	if len(format.URL) == 0 {
+		return nil, fmt.Errorf("no URL found for selected format")
+	}
 
 	// for images, download in memory and convert to jpeg
 	if format.Type == database.MediaTypePhoto {

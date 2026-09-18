@@ -75,6 +75,7 @@ type UserLegacy struct {
 	Name                 string `json:"name"`
 	ProfileImageURLHTTPS string `json:"profile_image_url_https"`
 	CreatedAt            string `json:"created_at"`
+	IsBlueVerified       bool   `json:"is_blue_verified"`
 }
 
 type Tweet struct {
@@ -92,6 +93,13 @@ type Tweet struct {
 	ConversationID    string            `json:"conversation_id_str"`
 	Lang              string            `json:"lang"`
 	UserIDStr         string            `json:"user_id_str"`
+
+	// populated from the API response, not part of the tweet object
+	AuthorName     string `json:"-"`
+	AuthorHandle   string `json:"-"`
+	AuthorAvatar   string `json:"-"`
+	AuthorVerified bool   `json:"-"`
+	ViewCount      string `json:"-"`
 }
 
 type ExtendedEntities struct {
